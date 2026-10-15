@@ -1,121 +1,113 @@
-"""Play Snake with the arrow keys or WASD. Run with: python3 python/main.py."""
+"""Terminal Snake. Run: python3 python/main.py (arrows/WASD, P pause, R restart, Q quit)."""
 
-import os
+import curses
 import random
-import sys
-
-# macOS's bundled Tk emits this warning when the window is initialized.
-if sys.platform == "darwin":
-    os.environ.setdefault("TK_SILENCE_DEPRECATION", "1")
-
-import tkinter as tk
+import time
 
 
-CELL = 24
-COLUMNS = 25
-ROWS = 20
-TICK_MS = 110
+WIDTH, HEIGHT = 30, 18
 DIRECTIONS = {
-    "Up": (0, -1), "w": (0, -1),
-    "Down": (0, 1), "s": (0, 1),
-    "Left": (-1, 0), "a": (-1, 0),
-    "Right": (1, 0), "d": (1, 0),
+    curses.KEY_UP: (0, -1), ord("w"): (0, -1),
+    curses.KEY_DOWN: (0, 1), ord("s"): (0, 1),
+    curses.KEY_LEFT: (-1, 0), ord("a"): (-1, 0),
+    curses.KEY_RIGHT: (1, 0), ord("d"): (1, 0),
 }
 
 
-class SnakeGame:
-    def __init__(self, root):
-        self.root = root
-        root.title("Snake")
-        root.resizable(False, False)
-        self.status = tk.StringVar()
-        tk.Label(root, textvariable=self.status, font=("Arial", 14)).pack(pady=8)
-        self.canvas = tk.Canvas(
-            root, width=COLUMNS * CELL, height=ROWS * CELL,
-            background="#101820", highlightthickness=0,
-        )
-        self.canvas.pack()
-        tk.Label(root, text="Arrows / WASD: move    Space: pause    R: restart").pack(pady=8)
-        root.bind("<KeyPress>", self.on_key)
-        self.reset()
-        self.tick()
+def place_food(snake):
+    occupied = set(snake)
+    empty = [(x, y) for y in range(HEIGHT) for x in range(WIDTH)
+             if (x, y) not in occupied]
+    return random.choice(empty) if empty else None
 
-    def reset(self):
-        self.snake = [(COLUMNS // 2 - i, ROWS // 2) for i in range(3)]
-        self.direction = (1, 0)
-        self.next_direction = self.direction
-        self.turn_queued = False
-        self.paused = False
-        self.finished = False
-        self.food = self.place_food()
-        self.draw()
 
-    def place_food(self):
-        occupied = set(self.snake)
-        empty = [(x, y) for x in range(COLUMNS) for y in range(ROWS)
-                 if (x, y) not in occupied]
-        return random.choice(empty) if empty else None
+def advance(snake, direction, food):
+    """Return the next body, food, and outcome without changing the input body."""
+    x, y = snake[0]
+    dx, dy = direction
+    head = (x + dx, y + dy)
+    growing = head == food
+    body = snake if growing else snake[:-1]
+    if not (0 <= head[0] < WIDTH and 0 <= head[1] < HEIGHT) or head in body:
+        return snake, food, "Game over!"
+    snake = [head] + (snake if growing else snake[:-1])
+    if growing:
+        food = place_food(snake)
+    return snake, food, "You win!" if food is None else ""
 
-    def on_key(self, event):
-        key = event.keysym.lower() if len(event.keysym) == 1 else event.keysym
-        if key == "r":
-            self.reset()
-        elif key == "space" and not self.finished:
-            self.paused = not self.paused
-            self.draw()
-        elif key in DIRECTIONS and not (self.finished or self.paused or self.turn_queued):
-            direction = DIRECTIONS[key]
-            if direction != self.direction and direction != tuple(-n for n in self.direction):
-                self.next_direction = direction
-                self.turn_queued = True
 
-    def tick(self):
-        if not self.finished and not self.paused:
-            self.direction = self.next_direction
-            self.turn_queued = False
-            x, y = self.snake[0]
-            dx, dy = self.direction
-            head = (x + dx, y + dy)
-            growing = head == self.food
-            body = self.snake if growing else self.snake[:-1]
-            if not (0 <= head[0] < COLUMNS and 0 <= head[1] < ROWS) or head in body:
-                self.finished = True
-            else:
-                self.snake.insert(0, head)
-                if growing:
-                    self.food = self.place_food()
-                    self.finished = self.food is None
-                else:
-                    self.snake.pop()
-            self.draw()
-        self.root.after(TICK_MS, self.tick)
+def play(screen):
+    try:
+        curses.curs_set(0)
+    except curses.error:
+        pass
+    screen.keypad(True)
+    screen.timeout(120)
 
-    def draw(self):
-        self.canvas.delete("all")
-        self.status.set(f"Score: {len(self.snake) - 3}")
-        for index, (x, y) in enumerate(self.snake):
-            self.draw_cell(x, y, "#b5ef8a" if index == 0 else "#69c779")
-        if self.food is not None:
-            self.draw_cell(*self.food, "#ff6b6b")
-        if self.finished or self.paused:
-            message = "You win!" if self.food is None else "Game over"
-            message = message + " — press R to restart" if self.finished else "Paused"
-            self.canvas.create_rectangle(0, ROWS * CELL // 2 - 30,
-                                         COLUMNS * CELL, ROWS * CELL // 2 + 30,
-                                         fill="#101820", outline="")
-            self.canvas.create_text(COLUMNS * CELL // 2, ROWS * CELL // 2,
-                                    text=message, fill="white", font=("Arial", 20))
+    def reset():
+        body = [(WIDTH // 2 - i, HEIGHT // 2) for i in range(3)]
+        return body, (1, 0), place_food(body), False, ""
 
-    def draw_cell(self, x, y, color):
-        self.canvas.create_rectangle(x * CELL + 1, y * CELL + 1,
-                                     (x + 1) * CELL - 1, (y + 1) * CELL - 1,
-                                     fill=color, outline="")
+    snake, direction, food, paused, outcome = reset()
+    while True:
+        frame_started = time.monotonic()
+        screen.erase()
+        rows, columns = screen.getmaxyx()
+        too_small = rows < HEIGHT + 6 or columns < WIDTH + 2
+
+        def write(y, x, text):
+            # Leave the bottom-right cell untouched: curses can raise there.
+            if y < rows and x < columns - 1:
+                screen.addnstr(y, x, text, columns - x - 1)
+
+        if too_small:
+            write(0, 0, f"Resize terminal to {WIDTH + 2} columns x {HEIGHT + 6} rows.")
+            write(1, 0, "Q: quit")
+        else:
+            write(0, 0, f"SNAKE   Score: {len(snake) - 3}")
+            write(1, 0, "+" + "-" * WIDTH + "+")
+            for y in range(HEIGHT):
+                write(y + 2, 0, "|" + " " * WIDTH + "|")
+            write(HEIGHT + 2, 0, "+" + "-" * WIDTH + "+")
+            if food is not None:
+                write(food[1] + 2, food[0] + 1, "*")
+            for index, (x, y) in enumerate(snake):
+                write(y + 2, x + 1, "@" if index == 0 else "o")
+            write(HEIGHT + 3, 0, "Arrows/WASD move | P pause")
+            write(HEIGHT + 4, 0, "R restart | Q quit")
+            write(HEIGHT + 5, 0, outcome or ("Paused" if paused else "Eat * and avoid walls/yourself."))
+        screen.refresh()
+        key = screen.getch()
+        if 65 <= key <= 90:
+            key += 32
+        if key == ord("q"):
+            return
+        if key == ord("r"):
+            snake, direction, food, paused, outcome = reset()
+            continue
+        if too_small or key == curses.KEY_RESIZE:
+            continue
+        if key in (ord("p"), ord(" ")):
+            paused = not paused
+            continue
+        if paused or outcome:
+            continue
+        candidate = DIRECTIONS.get(key, direction)
+        if candidate != (-direction[0], -direction[1]):
+            direction = candidate
+        snake, food, outcome = advance(snake, direction, food)
+        # Discard queued key repeats so each move keeps its intended pace.
+        curses.flushinp()
+        curses.napms(max(0, int((0.12 - (time.monotonic() - frame_started)) * 1000)))
 
 
 def main():
-    root = tk.Tk()
-    SnakeGame(root)
-    root.mainloop()
+    try:
+        curses.wrapper(play)
+    except KeyboardInterrupt:
+        pass
+    except curses.error:
+        print("Run this game in an interactive terminal with a supported TERM setting.")
 
 
 if __name__ == "__main__":
