@@ -1,6 +1,13 @@
 """Play Snake with the arrow keys or WASD. Run with: python3 python/main.py."""
 
+import os
 import random
+import sys
+
+# macOS's bundled Tk emits this warning when the window is initialized.
+if sys.platform == "darwin":
+    os.environ.setdefault("TK_SILENCE_DEPRECATION", "1")
+
 import tkinter as tk
 
 
